@@ -40,14 +40,45 @@ func main() {
 	}
 
 	p := provider.New(transport, logger)
+
+	// Start cache population
+	var wg sync.WaitGroup
+	var once sync.Once
+
+	// Only wait for cache in non-demo mode
+	isDemoMode := os.Getenv("SLACK_MCP_XOXP_TOKEN") == "demo" ||
+		(os.Getenv("SLACK_MCP_XOXC_TOKEN") == "demo" && os.Getenv("SLACK_MCP_XOXD_TOKEN") == "demo")
+
+	if !isDemoMode {
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			newUsersWatcher(p, &once, logger)()
+		}()
+
+		go func() {
+			defer wg.Done()
+			newChannelsWatcher(p, &once, logger)()
+		}()
+
+		// Wait for cache population to complete
+		logger.Info("Waiting for cache population to complete...",
+			zap.String("context", "console"),
+		)
+		wg.Wait()
+
+		// Verify cache is ready
+		if ready, err := p.IsReady(); !ready {
+			logger.Fatal("Cache population failed",
+				zap.String("context", "console"),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// Create server only after cache is ready
 	s := server.NewMCPServer(p, logger)
-
-	go func() {
-		var once sync.Once
-
-		newUsersWatcher(p, &once, logger)()
-		newChannelsWatcher(p, &once, logger)()
-	}()
 
 	switch transport {
 	case "stdio":
